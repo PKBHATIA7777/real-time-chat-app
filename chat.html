@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chat</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    /* Simple animation for typing dots */
+    .typing-indicator {
+      display: none;
+      padding: 5px 10px;
+      font-size: 14px;
+      font-style: italic;
+      color: #666;
+    }
+    .typing-indicator span {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      background-color: #666;
+      border-radius: 50%;
+      margin: 0 2px;
+      animation: blink 1.4s infinite both;
+    }
+    .typing-indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+    .typing-indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+    @keyframes blink {
+      0% { opacity: 0.2; }
+      20% { opacity: 1; }
+      100% { opacity: 0.2; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Chat Container -->
+  <div class="chat-container">
+
+    <!-- Top Bar -->
+    <div class="chat-header">
+      <button class="back-btn">&#8592;</button>
+      <h2 class="chat-title">Room Name</h2>
+    </div>
+
+    <!-- Chat Messages Area -->
+    <div class="chat-messages" id="messagesContainer">
+      <!-- Messages dynamically inserted here -->
+    </div>
+
+    <!-- Typing Indicator -->
+    <div class="typing-indicator" id="typingIndicator">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+
+    <!-- Input Area -->
+    <div class="chat-input">
+      <input type="text" placeholder="Type a message..." id="messageInput" />
+      <button type="button" class="send-btn" id="sendBtn">Send</button>
+    </div>
+    <button id="newMessagesBtn" class="new-messages-btn" style="display:none;">
+      ↓ New Messages
+    </button>
+    
+  </div> <!-- End Chat Container -->
+
+  <!-- Your app logic -->
+  <script type="module" src="js/chat.js"></script>
+</body>
+</html>
