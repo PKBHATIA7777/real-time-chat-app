@@ -1,11 +1,184 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Chatrooms</title>
+  <link rel="stylesheet" href="css/chatrooms.css" />
+  <style>
+    /* Modal backdrop */
+    #createRoomModalBackdrop {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* Modal container */
+    #createRoomModal {
+      background: white;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 420px;
+      padding: 20px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+      display: flex;
+      flex-direction: column;
+    }
+
+    #createRoomModal h3 {
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+
+    /* Form controls */
+    #createRoomModal label {
+      font-weight: bold;
+      margin-top: 10px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    #createRoomModal input[type="text"] {
+      width: 100%;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+
+    /* Member picker input */
+    #memberSearchInput {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    /* Member suggestions dropdown */
+    #memberSuggestions {
+      max-height: 120px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #f9f9f9;
+      margin-bottom: 12px;
+      display: none;
+      position: relative;
+      z-index: 1100;
+    }
+
+    #memberSuggestions div {
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    #memberSuggestions div:hover {
+      background: #e0f0ff;
+    }
+
+    /* Selected members list */
+    #selectedMembers {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    #selectedMembers .member-chip {
+      background: #4a90e2;
+      color: white;
+      padding: 4px 10px;
+      border-radius: 18px;
+      user-select: none;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+    }
+    #selectedMembers .member-chip .remove-btn {
+      margin-left: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    /* Buttons */
+    #createRoomModal .modal-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    #createRoomModal button {
+      padding: 8px 16px;
+      font-size: 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #createRoomModal button#cancelCreateRoom {
+      background: #ddd;
+      color: #333;
+    }
+    #createRoomModal button#createRoomSubmit {
+      background: #4a90e2;
+      color: white;
+    }
+
+    /* Validation error message */
+    #createRoomError {
+      color: red;
+      font-size: 13px;
+      margin-top: -6px;
+      margin-bottom: 10px;
+      min-height: 16px;
+    }
+  </style>
 </head>
 <body>
-    
+
+  <div class="chatrooms-container">
+    <!-- Header -->
+    <div class="chatrooms-header">
+      <h2>Your Chatrooms</h2>
+      <button id="btnCreateRoom" title="Create New Room">＋</button>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="chatrooms-search-bar">
+      <input type="text" id="roomSearchInput" placeholder="Search rooms..." />
+    </div>
+
+    <!-- Rooms List -->
+    <div id="chatroomsList" class="chatrooms-list"></div>
+  </div>
+
+  <!-- Create Room Modal -->
+  <div id="createRoomModalBackdrop">
+    <div id="createRoomModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle">Create New Room</h3>
+
+      <label for="roomTitleInput">Room Title</label>
+      <input type="text" id="roomTitleInput" placeholder="Enter room title" maxlength="50" />
+
+      <label for="memberSearchInput">Add Members</label>
+      <input type="text" id="memberSearchInput" placeholder="Type name or email to find users" autocomplete="off" />
+      <div id="memberSuggestions"></div>
+
+      <div id="selectedMembers" aria-live="polite"></div>
+
+      <div id="createRoomError" role="alert"></div>
+
+      <div class="modal-buttons">
+        <button id="cancelCreateRoom">Cancel</button>
+        <button id="createRoomSubmit">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/chatrooms.js"></script>
 </body>
 </html>
