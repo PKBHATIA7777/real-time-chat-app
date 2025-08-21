@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Room Members</title>
+  <link rel="stylesheet" href="css/room_members.css" />
+</head>
+<body>
+
+  <div class="members-container">
+    <header class="members-header">
+      <button id="backBtn" title="Back to Rooms">&#8592;</button>
+      <h2 id="roomTitle">Room Members</h2>
+    </header>
+
+    <main class="members-main">
+      <div id="membersList" class="members-list"></div>
+
+      <div id="addMemberSection" class="add-member-section" style="display:none;">
+        <input type="text" id="memberSearchInput" placeholder="Search users to add..." autocomplete="off" />
+        <div id="memberSuggestions" class="member-suggestions"></div>
+      </div>
+    </main>
+  </div>
+
+  <script type="module" src="js/room_members.js"></script>
+</body>
+</html>
