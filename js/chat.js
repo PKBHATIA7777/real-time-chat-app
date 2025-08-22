@@ -59,8 +59,7 @@ function formatDateLabel(date) {
   if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
   return date.toLocaleDateString();
 }
-
-function insertDateSeparator(date, prepend, refNode = null) {
+function insertDateSeparator(date, refNode = null) {
   const dateKey = dateString(date);
   if (renderedDateSet.has(dateKey)) return;
 
@@ -69,11 +68,12 @@ function insertDateSeparator(date, prepend, refNode = null) {
   separator.setAttribute("data-date", dateKey);
   separator.textContent = formatDateLabel(date);
 
-  if (prepend && refNode) {
-    messagesContainer.insertBefore(separator, refNode);
+  if (refNode) {
+    messagesContainer.insertBefore(separator, refNode); // put above a specific message
   } else {
-    messagesContainer.appendChild(separator);
+    messagesContainer.appendChild(separator); // fallback
   }
+
   renderedDateSet.add(dateKey);
 }
 
@@ -117,8 +117,8 @@ async function fetchMessages() {
 
   const messagesRef = collection(db, "chatrooms", roomId, "messages");
   let q = !lastVisibleMsg
-    ? query(messagesRef, orderBy("createdAt", "asc"), limit(PAGE_SIZE))
-    : query(messagesRef, orderBy("createdAt", "asc"), startAfter(lastVisibleMsg), limit(PAGE_SIZE));
+    ? query(messagesRef, orderBy("createdAt", "desc"), limit(PAGE_SIZE))
+    : query(messagesRef, orderBy("createdAt", "desc"), startAfter(lastVisibleMsg), limit(PAGE_SIZE));
 
   const snapshot = await getDocs(q);
   if (snapshot.empty) {
@@ -132,32 +132,38 @@ async function fetchMessages() {
     messages.push({ ...data, id: docSnap.id, createdAt: data.createdAt?.toDate() });
   });
 
+  // since Firestore gave us DESC order, reverse so we render oldest → newest
+  messages.reverse();
+
   lastVisibleMsg = snapshot.docs[snapshot.docs.length - 1];
-  prependMessages(messages);
+  prependMessages(messages);  // ✅ only this one
+
   isFetching = false;
 }
 
+
 function prependMessages(messages) {
-  // reverse to render oldest first
-  messages.reverse();
   let prevDateStr = null;
 
   messages.forEach((msg) => {
     if (renderedMessages.has(msg.id) || !msg.createdAt) return;
 
-    let msgDateStr = dateString(msg.createdAt);
+    const msgDateStr = dateString(msg.createdAt);
+
     if (prevDateStr !== msgDateStr) {
-      insertDateSeparator(msg.createdAt, true, messagesContainer.firstChild);
+      insertDateSeparator(msg.createdAt);
     }
 
     const isMe = msg.senderId === currentUserId;
     const messageDiv = createMessageDiv(msg, isMe);
-    messagesContainer.insertBefore(messageDiv, messagesContainer.firstChild);
-    renderedMessages.set(msg.id, messageDiv);
+    messagesContainer.appendChild(messageDiv);  // 👈 always append
 
+    renderedMessages.set(msg.id, { ...msg, element: messageDiv });
     prevDateStr = msgDateStr;
   });
 }
+
+
 
 function createMessageDiv(msg, isMe) {
   const div = document.createElement("div");
@@ -182,39 +188,56 @@ function escapeHtml(text) {
 }
 
 // **This is the corrected function**
+// js/chat.js
 function watchNewMessages() {
   const messagesRef = collection(db, "chatrooms", roomId, "messages");
   const q = query(messagesRef, orderBy("createdAt", "asc"));
 
   onSnapshot(q, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      if (change.type === "added") {
+      // Handle both added and modified changes to capture initial message and
+      // server-timestamp updates.
+      if (change.type === "added" || change.type === "modified") {
         const msg = change.doc.data();
         msg.id = change.doc.id;
-        msg.createdAt = msg.createdAt?.toDate();
-        if (!msg.createdAt || renderedMessages.has(msg.id)) return;
 
-        // Find the date of the last rendered message
+        // Ensure the message has a valid timestamp from the server
+        if (!msg.createdAt) return;
+
+        msg.createdAt = msg.createdAt.toDate();
+        const isMe = msg.senderId === currentUserId;
+
+        if (renderedMessages.has(msg.id)) {
+          // If the message is already rendered (e.g., from a modified event),
+          // update the existing element.
+          const existingMsg = renderedMessages.get(msg.id);
+          existingMsg.element.innerHTML = `
+            <strong class="username">${isMe ? "Me" : escapeHtml(msg.senderId)}</strong>
+            <p>${escapeHtml(msg.text || "")}</p>
+            <span class="timestamp">${msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          `;
+          return;
+        }
+
+        const lastMsgEl = [...messagesContainer.children]
+          .reverse()
+          .find(el => el.classList.contains("message"));
+
         let lastRenderedDateStr = null;
-        const lastMsgDiv = [...messagesContainer.children].reverse().find(el => el.classList.contains("message"));
-        if (lastMsgDiv) {
-            const lastMsg = renderedMessages.get(lastMsgDiv.dataset.id);
-            if (lastMsg) {
-                lastRenderedDateStr = dateString(lastMsg.createdAt);
-            }
+        if (lastMsgEl) {
+          const lastMsg = renderedMessages.get(lastMsgEl.dataset.id);
+          if (lastMsg) lastRenderedDateStr = dateString(lastMsg.createdAt);
         }
 
         const msgDateStr = dateString(msg.createdAt);
-
-        // If the date has changed from the last message's date, insert a new date separator.
         if (lastRenderedDateStr !== msgDateStr) {
-          insertDateSeparator(msg.createdAt, false);
+          insertDateSeparator(msg.createdAt, messagesContainer.lastElementChild);
         }
 
-        const isMe = msg.senderId === currentUserId;
         const messageDiv = createMessageDiv(msg, isMe);
         messagesContainer.appendChild(messageDiv);
-        renderedMessages.set(msg.id, msg); // Store full message data
+
+        renderedMessages.set(msg.id, { ...msg, element: messageDiv });
 
         if (isScrolledToBottom() || isMe) {
           scrollToBottom();
@@ -226,6 +249,8 @@ function watchNewMessages() {
     });
   });
 }
+
+
 
 function setupEventListeners() {
   sendButton.addEventListener("click", sendMessage);
