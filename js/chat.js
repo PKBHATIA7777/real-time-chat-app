@@ -12,6 +12,7 @@ import {
   limit,
   doc,
   setDoc,
+  getDoc,
   getDocs,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import {
@@ -35,6 +36,8 @@ const newMessagesBtn = document.getElementById("newMessagesBtn");
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
 const offlineBanner = document.getElementById("offlineBanner");
+const chatTitleElem = document.querySelector(".chat-title");
+const backBtn = document.getElementById("backBtn");
 
 let lastVisibleMsg = null;
 let isFetching = false;
@@ -42,7 +45,37 @@ let renderedMessages = new Map();
 let renderedDateSet = new Set();
 let isSending = false;
 let typingTimeout = null;
-let hasUserScrolledAway = false;
+
+// Helper: Get date string in YYYY-MM-DD
+function dateString(date) {
+  return date.toISOString().substring(0, 10);
+}
+
+function formatDateLabel(date) {
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString();
+}
+
+function insertDateSeparator(date, prepend, refNode = null) {
+  const dateKey = dateString(date);
+  if (renderedDateSet.has(dateKey)) return;
+
+  const separator = document.createElement("div");
+  separator.classList.add("date-separator");
+  separator.setAttribute("data-date", dateKey);
+  separator.textContent = formatDateLabel(date);
+
+  if (prepend && refNode) {
+    messagesContainer.insertBefore(separator, refNode);
+  } else {
+    messagesContainer.appendChild(separator);
+  }
+  renderedDateSet.add(dateKey);
+}
 
 // Authentication and Initialization
 signInAnonymously(auth).catch(console.error);
@@ -51,12 +84,18 @@ onAuthStateChanged(auth, async (user) => {
   if (user) {
     currentUserId = user.uid;
 
-    // Parse roomId from URL
     roomId = new URLSearchParams(window.location.search).get("roomId");
     if (!roomId) {
       alert("Room ID missing in URL");
       return;
     }
+
+    if (chatTitleElem) {
+      const roomDoc = await getDoc(doc(db, "chatrooms", roomId));
+      chatTitleElem.textContent = roomDoc.exists() ? roomDoc.data().title || "Unnamed Room" : "Room Not Found";
+    }
+
+    renderedDateSet = new Set();
 
     updateSendButtonState();
     monitorNetworkStatus();
@@ -71,21 +110,17 @@ onAuthStateChanged(auth, async (user) => {
   }
 });
 
-// Fetch paginated messages (older messages)
+// Fetch paginated older messages (prepend)
 async function fetchMessages() {
   if (isFetching) return;
   isFetching = true;
 
   const messagesRef = collection(db, "chatrooms", roomId, "messages");
-  let q;
+  let q = !lastVisibleMsg
+    ? query(messagesRef, orderBy("createdAt", "asc"), limit(PAGE_SIZE))
+    : query(messagesRef, orderBy("createdAt", "asc"), startAfter(lastVisibleMsg), limit(PAGE_SIZE));
 
-  if (!lastVisibleMsg) {
-    q = query(messagesRef, orderBy("createdAt", "asc"), limit(PAGE_SIZE));
-  } else {
-    q = query(messagesRef, orderBy("createdAt", "asc"), startAfter(lastVisibleMsg), limit(PAGE_SIZE));
-  }
-
-  const snapshot = await q.get ? await q.get() : await getDocs(q);
+  const snapshot = await getDocs(q);
   if (snapshot.empty) {
     isFetching = false;
     return;
@@ -97,60 +132,56 @@ async function fetchMessages() {
     messages.push({ ...data, id: docSnap.id, createdAt: data.createdAt?.toDate() });
   });
 
-  lastVisibleMsg = snapshot.docs ? snapshot.docs[snapshot.docs.length - 1] : null;
-
+  lastVisibleMsg = snapshot.docs[snapshot.docs.length - 1];
   prependMessages(messages);
   isFetching = false;
 }
 
-// Prepend messages at top (pagination)
 function prependMessages(messages) {
-  messages.forEach((msg) => {
-    if (renderedMessages.has(msg.id)) return;
+  // reverse to render oldest first
+  messages.reverse();
+  let prevDateStr = null;
 
-    if (msg.createdAt) addDateSeparatorIfNeeded(msg.createdAt, true);
+  messages.forEach((msg) => {
+    if (renderedMessages.has(msg.id) || !msg.createdAt) return;
+
+    let msgDateStr = dateString(msg.createdAt);
+    if (prevDateStr !== msgDateStr) {
+      insertDateSeparator(msg.createdAt, true, messagesContainer.firstChild);
+    }
 
     const isMe = msg.senderId === currentUserId;
     const messageDiv = createMessageDiv(msg, isMe);
     messagesContainer.insertBefore(messageDiv, messagesContainer.firstChild);
     renderedMessages.set(msg.id, messageDiv);
+
+    prevDateStr = msgDateStr;
   });
 }
 
-// Create message element
 function createMessageDiv(msg, isMe) {
   const div = document.createElement("div");
-  div.classList.add("message");
-  div.classList.add(isMe ? "message-sent" : "message-received");
+  div.classList.add("message", isMe ? "message-sent" : "message-received");
   div.setAttribute("data-id", msg.id);
 
-  const timeText = msg.createdAt
-    ? msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "";
+  const timeText = msg.createdAt ? msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
 
   div.innerHTML = `
-    <strong class="username">${isMe ? "Me" : msg.senderId}</strong>
+    <strong class="username">${isMe ? "Me" : escapeHtml(msg.senderId)}</strong>
     <p>${escapeHtml(msg.text || "")}</p>
     <span class="timestamp">${timeText}</span>
   `;
   return div;
 }
 
-// Escape HTML to prevent XSS
 function escapeHtml(text) {
   if (!text) return "";
-  return text.replace(/[&<>"']/g, (match) => {
-    return {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[match];
+  return text.replace(/[&<>"']/g, (m) => {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m];
   });
 }
 
-// Real-time listener for new messages
+// **This is the corrected function**
 function watchNewMessages() {
   const messagesRef = collection(db, "chatrooms", roomId, "messages");
   const q = query(messagesRef, orderBy("createdAt", "asc"));
@@ -161,14 +192,29 @@ function watchNewMessages() {
         const msg = change.doc.data();
         msg.id = change.doc.id;
         msg.createdAt = msg.createdAt?.toDate();
+        if (!msg.createdAt || renderedMessages.has(msg.id)) return;
 
-        if (renderedMessages.has(msg.id)) return;
-        if (msg.createdAt) addDateSeparatorIfNeeded(msg.createdAt, false);
+        // Find the date of the last rendered message
+        let lastRenderedDateStr = null;
+        const lastMsgDiv = [...messagesContainer.children].reverse().find(el => el.classList.contains("message"));
+        if (lastMsgDiv) {
+            const lastMsg = renderedMessages.get(lastMsgDiv.dataset.id);
+            if (lastMsg) {
+                lastRenderedDateStr = dateString(lastMsg.createdAt);
+            }
+        }
+
+        const msgDateStr = dateString(msg.createdAt);
+
+        // If the date has changed from the last message's date, insert a new date separator.
+        if (lastRenderedDateStr !== msgDateStr) {
+          insertDateSeparator(msg.createdAt, false);
+        }
 
         const isMe = msg.senderId === currentUserId;
         const messageDiv = createMessageDiv(msg, isMe);
         messagesContainer.appendChild(messageDiv);
-        renderedMessages.set(msg.id, messageDiv);
+        renderedMessages.set(msg.id, msg); // Store full message data
 
         if (isScrolledToBottom() || isMe) {
           scrollToBottom();
@@ -181,34 +227,6 @@ function watchNewMessages() {
   });
 }
 
-// Date separator helpers
-function addDateSeparatorIfNeeded(date, prepend) {
-  const dateKey = date.toDateString();
-  if (!renderedDateSet.has(dateKey)) {
-    const separator = document.createElement("div");
-    separator.classList.add("date-separator");
-    separator.setAttribute("data-date", dateKey);
-    separator.textContent = formatDateLabel(date);
-
-    if (prepend) {
-      messagesContainer.insertBefore(separator, messagesContainer.firstChild);
-    } else {
-      messagesContainer.appendChild(separator);
-    }
-    renderedDateSet.add(dateKey);
-  }
-}
-
-function formatDateLabel(date) {
-  const today = new Date();
-  const yesterday = new Date();
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return "Today";
-  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return date.toLocaleDateString();
-}
-
-// Event listeners setup
 function setupEventListeners() {
   sendButton.addEventListener("click", sendMessage);
   inputField.addEventListener("input", onInputChange);
@@ -224,9 +242,14 @@ function setupEventListeners() {
     newMessagesBtn.style.display = "none";
   });
   searchInput.addEventListener("input", searchMessages);
+
+  if (backBtn) {
+    backBtn.addEventListener("click", () => {
+      window.location.href = "chatrooms.html";
+    });
+  }
 }
 
-// Handle input changes (enable send button, typing)
 function onInputChange() {
   updateSendButtonState();
   sendTypingStatus(true);
@@ -234,7 +257,6 @@ function onInputChange() {
   typingTimeout = setTimeout(() => sendTypingStatus(false), 2000);
 }
 
-// Send chat message
 async function sendMessage() {
   const text = inputField.value.trim();
   if (!text || isSending) return;
@@ -259,13 +281,11 @@ async function sendMessage() {
   }
 }
 
-// Typing indicator management
 let typingRef = null;
 async function sendTypingStatus(isTyping) {
   if (!currentUserId || !roomId) return;
 
   if (!typingRef) typingRef = doc(db, "typing", roomId, "users", currentUserId);
-
 
   try {
     await setDoc(
@@ -282,15 +302,11 @@ async function sendTypingStatus(isTyping) {
 }
 
 function listenForTypingStatus() {
-  const typingCollection = collection(db, "typing", roomId, "users")
-
+  const typingCollection = collection(db, "typing", roomId, "users");
   onSnapshot(typingCollection, (snapshot) => {
     const typingUsers = [];
     snapshot.forEach((docSnap) => {
-      if (
-        docSnap.id !== currentUserId &&
-        docSnap.data().isTyping
-      ) {
+      if (docSnap.id !== currentUserId && docSnap.data().isTyping) {
         typingUsers.push(docSnap.id);
       }
     });
@@ -307,40 +323,29 @@ function listenForTypingStatus() {
   });
 }
 
-// Update read timestamp on chat open or scroll bottom
 async function updateLastRead() {
   if (!currentUserId || !roomId) return;
-
   const readRef = doc(db, "reads", `${currentUserId}_${roomId}`);
   try {
-    await setDoc(
-      readRef,
-      { lastReadTimestamp: serverTimestamp() },
-      { merge: true }
-    );
+    await setDoc(readRef, { lastReadTimestamp: serverTimestamp() }, { merge: true });
   } catch (e) {
     console.error("Failed to update last read timestamp", e);
   }
 }
 
-// UI helpers
 function updateSendButtonState() {
   const text = inputField.value.trim();
   sendButton.disabled = !text || text.length > 300 || isSending;
 }
 
 function isScrolledToBottom() {
-  return (
-    messagesContainer.scrollHeight - messagesContainer.scrollTop <=
-    messagesContainer.clientHeight + 10
-  );
+  return messagesContainer.scrollHeight - messagesContainer.scrollTop <= messagesContainer.clientHeight + 10;
 }
 
 function scrollToBottom() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Infinite scroll for pagination
 async function onScroll() {
   if (messagesContainer.scrollTop === 0) {
     await fetchMessages();
@@ -348,10 +353,11 @@ async function onScroll() {
   if (isScrolledToBottom()) {
     newMessagesBtn.style.display = "none";
     updateLastRead();
+  } else {
+    newMessagesBtn.style.display = "block";
   }
 }
 
-// Basic search over rendered messages (client-side)
 function searchMessages() {
   const queryText = searchInput.value.toLowerCase();
   searchResults.innerHTML = "";
@@ -361,9 +367,9 @@ function searchMessages() {
   }
 
   const matched = [];
-  renderedMessages.forEach((msgDiv) => {
-    const text = msgDiv.querySelector("p")?.textContent.toLowerCase() || "";
-    if (text.includes(queryText)) matched.push(msgDiv);
+  renderedMessages.forEach((msg) => {
+    const text = msg.text?.toLowerCase() || "";
+    if (text.includes(queryText)) matched.push(msg);
   });
 
   if (matched.length === 0) {
@@ -371,12 +377,15 @@ function searchMessages() {
     return;
   }
 
-  matched.forEach((msgDiv) => {
+  matched.forEach((msg) => {
     const item = document.createElement("div");
     item.className = "search-result-item";
-    item.textContent = msgDiv.querySelector("p").textContent;
+    item.textContent = msg.text;
     item.onclick = () => {
-      msgDiv.scrollIntoView({ behavior: "smooth", block: "center" });
+      const msgDiv = document.querySelector(`[data-id="${msg.id}"]`);
+      if (msgDiv) {
+        msgDiv.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
       searchResults.style.display = "none";
       searchInput.value = "";
     };
@@ -386,7 +395,6 @@ function searchMessages() {
   searchResults.style.display = "block";
 }
 
-// Network status offline banner
 function monitorNetworkStatus() {
   if (!offlineBanner) return;
   offlineBanner.style.display = navigator.onLine ? "none" : "block";
