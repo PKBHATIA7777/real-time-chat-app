@@ -1,4 +1,3 @@
-// js/chat.js
 import { app } from "./firebase-config.js";
 import {
   getFirestore,
@@ -15,14 +14,23 @@ import {
   getDoc,
   getDocs,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
 import {
   getAuth,
   signInAnonymously,
   onAuthStateChanged,
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
+import {
+  getStorage,
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js";
+
 const db = getFirestore(app);
 const auth = getAuth(app);
+const storage = getStorage(app);
 
 let currentUserId = null;
 let roomId = null;
@@ -39,6 +47,9 @@ const offlineBanner = document.getElementById("offlineBanner");
 const chatTitleElem = document.querySelector(".chat-title");
 const backBtn = document.getElementById("backBtn");
 
+const imageInput = document.getElementById("imageInput");
+const imageUploadBtn = document.getElementById("imageUploadBtn");
+
 let lastVisibleMsg = null;
 let isFetching = false;
 let renderedMessages = new Map();
@@ -46,7 +57,55 @@ let renderedDateSet = new Set();
 let isSending = false;
 let typingTimeout = null;
 
-// Helper: Get date string in YYYY-MM-DD
+// Trigger file select dialog for image upload button
+imageUploadBtn.addEventListener("click", () => imageInput.click());
+
+// Handle image file selection + upload to Firebase Storage
+imageInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  if (file.size > 5 * 1024 * 1024) {
+    alert("File size exceeds 5MB limit.");
+    return;
+  }
+
+  const messageId = doc(collection(db, "chatrooms", roomId, "messages")).id;
+  const storageRef = ref(storage, `chatrooms/${roomId}/images/${messageId}.jpg`);
+
+  const uploadTask = uploadBytesResumable(storageRef, file);
+
+  uploadTask.on(
+    "state_changed",
+    (snapshot) => {
+      const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+      console.log(`Upload is ${progress.toFixed(2)}% done`);
+      // Optional: Implement progress UI update here
+    },
+    (error) => {
+      alert("Image upload failed.");
+      console.error(error);
+    },
+    async () => {
+      try {
+        const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        await addDoc(collection(db, "chatrooms", roomId, "messages"), {
+          imageUrl: downloadURL,
+          senderId: currentUserId,
+          createdAt: serverTimestamp(),
+          messageType: "IMAGE",
+        });
+      } catch (err) {
+        alert("Failed to send image message.");
+        console.error(err);
+      }
+    }
+  );
+
+  imageInput.value = "";
+});
+
+// Helper: Get date string YYYY-MM-DD 
 function dateString(date) {
   return date.toISOString().substring(0, 10);
 }
@@ -59,6 +118,7 @@ function formatDateLabel(date) {
   if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
   return date.toLocaleDateString();
 }
+
 function insertDateSeparator(date, refNode = null) {
   const dateKey = dateString(date);
   if (renderedDateSet.has(dateKey)) return;
@@ -69,12 +129,43 @@ function insertDateSeparator(date, refNode = null) {
   separator.textContent = formatDateLabel(date);
 
   if (refNode) {
-    messagesContainer.insertBefore(separator, refNode); // put above a specific message
+    messagesContainer.insertBefore(separator, refNode);
   } else {
-    messagesContainer.appendChild(separator); // fallback
+    messagesContainer.appendChild(separator);
   }
 
   renderedDateSet.add(dateKey);
+}
+
+// create div for message, including image rendering if applicable
+function createMessageDiv(msg, isMe) {
+  const div = document.createElement("div");
+  div.classList.add("message", isMe ? "message-sent" : "message-received");
+  div.setAttribute("data-id", msg.id);
+
+  const timeText = msg.createdAt ? msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+  let contentHtml = "";
+  if (msg.messageType === "IMAGE" && msg.imageUrl) {
+    contentHtml = `<img src="${msg.imageUrl}" alt="Image message" class="chat-image" />`;
+  } else {
+    contentHtml = `<p>${escapeHtml(msg.text || "")}</p>`;
+  }
+
+  div.innerHTML = `
+    <strong class="username">${isMe ? "Me" : escapeHtml(msg.senderId)}</strong>
+    ${contentHtml}
+    <span class="timestamp">${timeText}</span>
+  `;
+
+  return div;
+}
+
+function escapeHtml(text) {
+  if (!text) return "";
+  return text.replace(/[&<>"']/g, (m) => {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m];
+  });
 }
 
 // Authentication and Initialization
@@ -132,15 +223,13 @@ async function fetchMessages() {
     messages.push({ ...data, id: docSnap.id, createdAt: data.createdAt?.toDate() });
   });
 
-  // since Firestore gave us DESC order, reverse so we render oldest → newest
   messages.reverse();
 
   lastVisibleMsg = snapshot.docs[snapshot.docs.length - 1];
-  prependMessages(messages);  // ✅ only this one
+  prependMessages(messages);
 
   isFetching = false;
 }
-
 
 function prependMessages(messages) {
   let prevDateStr = null;
@@ -156,72 +245,38 @@ function prependMessages(messages) {
 
     const isMe = msg.senderId === currentUserId;
     const messageDiv = createMessageDiv(msg, isMe);
-    messagesContainer.appendChild(messageDiv);  // 👈 always append
+    messagesContainer.appendChild(messageDiv);
 
     renderedMessages.set(msg.id, { ...msg, element: messageDiv });
     prevDateStr = msgDateStr;
   });
 }
 
-
-
-function createMessageDiv(msg, isMe) {
-  const div = document.createElement("div");
-  div.classList.add("message", isMe ? "message-sent" : "message-received");
-  div.setAttribute("data-id", msg.id);
-
-  const timeText = msg.createdAt ? msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-
-  div.innerHTML = `
-    <strong class="username">${isMe ? "Me" : escapeHtml(msg.senderId)}</strong>
-    <p>${escapeHtml(msg.text || "")}</p>
-    <span class="timestamp">${timeText}</span>
-  `;
-  return div;
-}
-
-function escapeHtml(text) {
-  if (!text) return "";
-  return text.replace(/[&<>"']/g, (m) => {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m];
-  });
-}
-
-// **This is the corrected function**
-// js/chat.js
 function watchNewMessages() {
   const messagesRef = collection(db, "chatrooms", roomId, "messages");
   const q = query(messagesRef, orderBy("createdAt", "asc"));
 
   onSnapshot(q, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      // Handle both added and modified changes to capture initial message and
-      // server-timestamp updates.
       if (change.type === "added" || change.type === "modified") {
         const msg = change.doc.data();
         msg.id = change.doc.id;
 
-        // Ensure the message has a valid timestamp from the server
         if (!msg.createdAt) return;
-
         msg.createdAt = msg.createdAt.toDate();
         const isMe = msg.senderId === currentUserId;
 
         if (renderedMessages.has(msg.id)) {
-          // If the message is already rendered (e.g., from a modified event),
-          // update the existing element.
           const existingMsg = renderedMessages.get(msg.id);
           existingMsg.element.innerHTML = `
             <strong class="username">${isMe ? "Me" : escapeHtml(msg.senderId)}</strong>
-            <p>${escapeHtml(msg.text || "")}</p>
+            ${msg.messageType === "IMAGE" && msg.imageUrl ? `<img src="${msg.imageUrl}" alt="Image message" class="chat-image" />` : `<p>${escapeHtml(msg.text || "")}</p>`}
             <span class="timestamp">${msg.createdAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
           `;
           return;
         }
 
-        const lastMsgEl = [...messagesContainer.children]
-          .reverse()
-          .find(el => el.classList.contains("message"));
+        const lastMsgEl = [...messagesContainer.children].reverse().find(el => el.classList.contains("message"));
 
         let lastRenderedDateStr = null;
         if (lastMsgEl) {
@@ -249,8 +304,6 @@ function watchNewMessages() {
     });
   });
 }
-
-
 
 function setupEventListeners() {
   sendButton.addEventListener("click", sendMessage);
@@ -294,6 +347,7 @@ async function sendMessage() {
       text,
       senderId: currentUserId,
       createdAt: serverTimestamp(),
+      messageType: "TEXT",
     });
     inputField.value = "";
   } catch (err) {
@@ -430,3 +484,4 @@ function monitorNetworkStatus() {
     offlineBanner.style.display = "block";
   });
 }
+
